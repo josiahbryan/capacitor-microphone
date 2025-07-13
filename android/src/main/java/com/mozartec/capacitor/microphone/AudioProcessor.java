@@ -12,6 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.Queue;
 
+import edu.emory.mathcs.jtransforms.fft.FloatFFT_1D;
+
 /**
  * AudioProcessor handles real-time audio processing including FFT analysis and streaming
  * for the Capacitor Microphone plugin. It uses AudioRecord for raw audio access and
@@ -53,10 +55,11 @@ public class AudioProcessor {
     private byte[] frequencyData;
     
     // Audio streaming buffers
-    private short[] streamingBuffer = new short[0];
+        private short[] streamingBuffer = new short[0];
     private static final int STREAMING_BUFFER_DURATION_MS = 100; // 100ms chunks like reference code
-    
-    // FFT processing (placeholder for now - will integrate KissFFT)
+
+    // FFT processing using JTransforms
+    private FloatFFT_1D fftProcessor;
     private static final int DEFAULT_FFT_SIZE = 1024;
     private static final float DEFAULT_MIN_DECIBELS = -90.0f;
     private static final float DEFAULT_MAX_DECIBELS = -10.0f;
@@ -102,6 +105,15 @@ public class AudioProcessor {
      */
     public void configureAnalysis(AudioAnalysisConfig config) {
         this.analysisConfig = config;
+        
+        // Initialize buffers based on configuration
+        this.fftInput = new float[config.fftSize * 2]; // Complex numbers (real + imaginary)
+        this.fftOutput = new float[config.fftSize * 2];
+        this.frequencyData = new byte[config.fftSize / 2]; // Frequency bins
+        
+        // Initialize FFT processor
+        this.fftProcessor = new FloatFFT_1D(config.fftSize);
+        
         Log.d(TAG, "Analysis configured: FFT size=" + config.fftSize + 
               ", minDecibels=" + config.minDecibels + 
               ", maxDecibels=" + config.maxDecibels);
@@ -347,9 +359,11 @@ public class AudioProcessor {
                 fftInput[i * 2 + 1] = 0; // Imaginary part
             }
             
-            // TODO: Integrate KissFFT here
-            // For now, simulate FFT with placeholder processing
-            performFFTPlaceholder(fftInput, fftOutput);
+            // Perform FFT using JTransforms
+            System.arraycopy(fftInput, 0, fftOutput, 0, fftInput.length);
+            if (fftProcessor != null) {
+                fftProcessor.complexForward(fftOutput);
+            }
             
             // Convert FFT output to frequency magnitude data
             convertToFrequencyData(fftOutput, frequencyData);
@@ -430,21 +444,7 @@ public class AudioProcessor {
         return byteArray;
     }
     
-    /**
-     * Placeholder FFT implementation until KissFFT integration
-     */
-    private void performFFTPlaceholder(float[] input, float[] output) {
-        // Simple placeholder that simulates FFT magnitude calculation
-        // This will be replaced with actual KissFFT integration
-        
-        int halfSize = input.length / 2;
-        for (int i = 0; i < halfSize; i += 2) {
-            float real = input[i];
-            float imag = input[i + 1];
-            float magnitude = (float) Math.sqrt(real * real + imag * imag);
-            output[i / 2] = magnitude;
-        }
-    }
+
     
     /**
      * Convert FFT output to frequency data suitable for visualization
