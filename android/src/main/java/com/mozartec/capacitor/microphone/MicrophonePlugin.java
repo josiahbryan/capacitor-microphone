@@ -33,7 +33,7 @@ import java.util.Map;
                 @Permission(strings = {Manifest.permission.RECORD_AUDIO}, alias = MicrophonePlugin.MICROPHONE),
         }
 )
-public class MicrophonePlugin extends Plugin {
+public class MicrophonePlugin extends Plugin implements AudioProcessor.AudioDataCallback {
 
     // Permission alias constants
     static final String MICROPHONE = "microphone";
@@ -67,6 +67,33 @@ public class MicrophonePlugin extends Plugin {
         }
         
         isAudioProcessingActive = false;
+    }
+    
+    /**
+     * AudioDataCallback implementation - receives audio data from AudioProcessor
+     */
+    @Override
+    public void onAudioData(byte[] audioData, int sampleRate, int length) {
+        try {
+            // Convert byte array to int array for JavaScript compatibility
+            int[] intAudioData = new int[audioData.length];
+            for (int i = 0; i < audioData.length; i++) {
+                intAudioData[i] = audioData[i] & 0xFF; // Convert to unsigned int
+            }
+            
+            // Create event data
+            JSObject eventData = new JSObject();
+            eventData.put("audioData", intAudioData);
+            eventData.put("sampleRate", sampleRate);
+            eventData.put("length", length);
+            eventData.put("timestamp", System.currentTimeMillis());
+            
+            // Send event to JavaScript
+            notifyListeners("audioData", eventData);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending audio data event", e);
+        }
     }
 
     // Looks like checkPermissions is available out of the box
@@ -171,8 +198,16 @@ public class MicrophonePlugin extends Plugin {
 
     @PluginMethod
     public void getLiveStream(PluginCall call) {
-        // Not supported on Android - return null
-        call.resolve(new JSObject().put("stream", null));
+        // Android doesn't support MediaStream like web
+        // Instead, provide information about the event-based streaming system
+        JSObject result = new JSObject();
+        result.put("stream", null);
+        result.put("platform", "android");
+        result.put("alternativeApproach", "event-based");
+        result.put("eventName", "audioData");
+        result.put("instructions", "Use startAudioStream() and listen for 'audioData' events for real-time audio data");
+        
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -326,13 +361,14 @@ public class MicrophonePlugin extends Plugin {
                 isAudioProcessingActive = true;
             }
             
-            // Start streaming
-            if (audioProcessor.startStreaming(config, call)) {
+            // Start streaming with callback
+            if (audioProcessor.startStreaming(config, this)) {
                 JSObject result = new JSObject();
                 result.put("status", "Audio streaming started successfully");
                 result.put("sampleRate", sampleRate);
                 result.put("bufferSize", bufferSize);
                 result.put("format", format);
+                result.put("eventName", "audioData");
                 call.resolve(result);
             } else {
                 call.reject("Failed to start audio streaming");

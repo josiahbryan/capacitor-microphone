@@ -39,31 +39,119 @@ clearInterval(interval);
 
 ## Audio Streaming for Transcription
 
+### Android/iOS (Event-based)
+
+```typescript
+import { Microphone } from '@mozartec/capacitor-microphone';
+
+// Set up event listener for audio data
+Microphone.addListener('audioData', (data) => {
+  // data contains:
+  // - audioData: number[] (audio samples as unsigned 8-bit integers)
+  // - sampleRate: number (e.g. 16000)
+  // - length: number (number of samples)
+  // - timestamp: number (milliseconds since epoch)
+  
+  console.log(`Received ${data.audioData.length} audio samples`);
+  
+  // Convert to the format expected by AssemblyAI
+  const audioBuffer = new Uint8Array(data.audioData);
+  
+  // Send to transcription service
+  if (realtimeTranscriber) {
+    realtimeTranscriber.sendAudio(audioBuffer);
+  }
+});
+
+// Start recording and streaming
+await Microphone.startRecording();
+await Microphone.startAudioStream({
+  sampleRate: 16000,
+  bufferSize: 1024,
+  format: 'int16'
+});
+
+// Stop streaming
+await Microphone.stopAudioStream();
+await Microphone.stopRecording();
+
+// Clean up
+Microphone.removeAllListeners('audioData');
+```
+
+### Web (MediaStream-based)
+
 ```typescript
 import { Microphone } from '@mozartec/capacitor-microphone';
 
 // Start recording
 await Microphone.startRecording();
 
-// Configure streaming for AssemblyAI (16kHz)
-const streamConfig = {
-  sampleRate: 16000,
-  bufferSize: 1024,
-  format: 'int16' as const
-};
+// Get the live stream (Web only)
+const stream = await Microphone.getLiveStream();
 
-// Start streaming with callback
-await Microphone.startAudioStream(streamConfig, (audioData: Int16Array) => {
-  // audioData contains raw audio samples
-  console.log(`Received ${audioData.length} samples`);
+if (stream) {
+  // Use Web Audio API for processing
+  const audioContext = new AudioContext({ sampleRate: 16000 });
+  const source = audioContext.createMediaStreamSource(stream);
   
-  // Send to transcription service
-  sendToTranscriptionService(audioData);
-});
+  // Use AudioWorklet for processing (similar to reference code)
+  const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+  source.connect(audioWorkletNode);
+  
+  audioWorkletNode.port.onmessage = (event) => {
+    const audioData = new Uint8Array(event.data.audio_data);
+    // Send to transcription service
+    if (realtimeTranscriber) {
+      realtimeTranscriber.sendAudio(audioData);
+    }
+  };
+}
+```
 
-// Stop streaming
-await Microphone.stopAudioStream();
-await Microphone.stopRecording();
+### Cross-Platform Approach
+
+```typescript
+import { Microphone } from '@mozartec/capacitor-microphone';
+import { Capacitor } from '@capacitor/core';
+
+async function startRealtimeTranscription() {
+  await Microphone.startRecording();
+  
+  if (Capacitor.getPlatform() === 'web') {
+    // Web: Use MediaStream approach
+    const stream = await Microphone.getLiveStream();
+    if (stream) {
+      setupWebAudioProcessing(stream);
+    }
+  } else {
+    // Android/iOS: Use event-based approach
+    Microphone.addListener('audioData', (data) => {
+      const audioBuffer = new Uint8Array(data.audioData);
+      sendToTranscriptionService(audioBuffer);
+    });
+    
+    await Microphone.startAudioStream({
+      sampleRate: 16000,
+      bufferSize: 1024,
+      format: 'int16'
+    });
+  }
+}
+
+function setupWebAudioProcessing(stream: MediaStream) {
+  const audioContext = new AudioContext({ sampleRate: 16000 });
+  const source = audioContext.createMediaStreamSource(stream);
+  
+  // AudioWorklet processing code here...
+}
+
+function sendToTranscriptionService(audioData: Uint8Array) {
+  // Send to AssemblyAI or your transcription service
+  if (realtimeTranscriber) {
+    realtimeTranscriber.sendAudio(audioData);
+  }
+}
 ```
 
 ## Live Audio Visualization

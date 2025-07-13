@@ -9,6 +9,8 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginCall;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Queue;
 
 /**
  * AudioProcessor handles real-time audio processing including FFT analysis and streaming
@@ -16,6 +18,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * provides configurable audio analysis and streaming capabilities.
  */
 public class AudioProcessor {
+    
+    /**
+     * Callback interface for delivering audio data to the plugin
+     */
+    public interface AudioDataCallback {
+        void onAudioData(byte[] audioData, int sampleRate, int length);
+    }
     private static final String TAG = "AudioProcessor";
     
     // Audio configuration
@@ -31,12 +40,21 @@ public class AudioProcessor {
     private AudioStreamConfig streamConfig;
     private boolean streamingEnabled = false;
     private PluginCall streamCallback;
+    private AudioDataCallback audioDataCallback;
+    
+    // Audio data queue for real-time delivery
+    private Queue<byte[]> audioDataQueue = new ConcurrentLinkedQueue<>();
+    private volatile boolean deliverAudioData = false;
     
     // Audio data buffers
     private short[] audioBuffer;
     private float[] fftInput;
     private float[] fftOutput;
     private byte[] frequencyData;
+    
+    // Audio streaming buffers
+    private short[] streamingBuffer = new short[0];
+    private static final int STREAMING_BUFFER_DURATION_MS = 100; // 100ms chunks like reference code
     
     // FFT processing (placeholder for now - will integrate KissFFT)
     private static final int DEFAULT_FFT_SIZE = 1024;
@@ -147,8 +165,22 @@ public class AudioProcessor {
         configureStreaming(config);
         this.streamCallback = callback;
         this.streamingEnabled = true;
+        this.deliverAudioData = true;
         
         Log.d(TAG, "Audio streaming started");
+        return true;
+    }
+    
+    /**
+     * Start audio streaming with data callback
+     */
+    public boolean startStreaming(AudioStreamConfig config, AudioDataCallback callback) {
+        configureStreaming(config);
+        this.audioDataCallback = callback;
+        this.streamingEnabled = true;
+        this.deliverAudioData = true;
+        
+        Log.d(TAG, "Audio streaming started with data callback");
         return true;
     }
     
@@ -158,6 +190,9 @@ public class AudioProcessor {
     public void stopStreaming() {
         streamingEnabled = false;
         streamCallback = null;
+        audioDataCallback = null;
+        deliverAudioData = false;
+        audioDataQueue.clear();
         Log.d(TAG, "Audio streaming stopped");
     }
     
@@ -328,34 +363,71 @@ public class AudioProcessor {
      * Process audio data for streaming
      */
     private void processForStreaming(short[] buffer, int length) {
-        if (streamCallback == null) {
+        if (!deliverAudioData || (streamCallback == null && audioDataCallback == null)) {
             return;
         }
         
         try {
-            // Create array for callback (copy data to avoid modification)
-            short[] audioData = new short[length];
-            System.arraycopy(buffer, 0, audioData, 0, length);
+            // Accumulate audio data in streaming buffer
+            streamingBuffer = mergeBuffers(streamingBuffer, buffer, length);
             
-            // Convert to JSObject for Capacitor
-            JSObject result = new JSObject();
+            // Calculate how much data we need for the desired duration
+            int samplesNeeded = (streamConfig.sampleRate * STREAMING_BUFFER_DURATION_MS) / 1000;
             
-            // Convert short array to int array for JavaScript compatibility
-            int[] intAudioData = new int[audioData.length];
-            for (int i = 0; i < audioData.length; i++) {
-                intAudioData[i] = audioData[i];
+            // If we have enough data, send it
+            if (streamingBuffer.length >= samplesNeeded) {
+                // Extract the chunk to send
+                short[] chunkToSend = new short[samplesNeeded];
+                System.arraycopy(streamingBuffer, 0, chunkToSend, 0, samplesNeeded);
+                
+                // Remove sent data from buffer
+                short[] remainingBuffer = new short[streamingBuffer.length - samplesNeeded];
+                System.arraycopy(streamingBuffer, samplesNeeded, remainingBuffer, 0, remainingBuffer.length);
+                streamingBuffer = remainingBuffer;
+                
+                // Convert to byte array (similar to reference code conversion)
+                byte[] audioBytes = convertToByteArray(chunkToSend);
+                
+                // Deliver via callback
+                if (audioDataCallback != null) {
+                    audioDataCallback.onAudioData(audioBytes, streamConfig.sampleRate, audioBytes.length);
+                }
+                
+                // Also queue for potential retrieval
+                audioDataQueue.offer(audioBytes);
+                
+                // Keep queue size manageable
+                while (audioDataQueue.size() > 10) {
+                    audioDataQueue.poll();
+                }
             }
-            
-            result.put("audioData", intAudioData);
-            result.put("sampleRate", streamConfig.sampleRate);
-            result.put("length", length);
-            
-            // TODO: Send via event listener instead of direct callback
-            // For now, we'll store it for retrieval
             
         } catch (Exception e) {
             Log.e(TAG, "Error processing audio for streaming", e);
         }
+    }
+    
+    /**
+     * Merge two short arrays (similar to mergeBuffers in reference code)
+     */
+    private short[] mergeBuffers(short[] lhs, short[] rhs, int rhsLength) {
+        short[] merged = new short[lhs.length + rhsLength];
+        System.arraycopy(lhs, 0, merged, 0, lhs.length);
+        System.arraycopy(rhs, 0, merged, lhs.length, rhsLength);
+        return merged;
+    }
+    
+    /**
+     * Convert short array to byte array (similar to reference code)
+     * This mimics the Int16Array to Uint8Array conversion in the reference code
+     */
+    private byte[] convertToByteArray(short[] shortArray) {
+        byte[] byteArray = new byte[shortArray.length * 2];
+        for (int i = 0; i < shortArray.length; i++) {
+            byteArray[i * 2] = (byte) (shortArray[i] & 0xFF);
+            byteArray[i * 2 + 1] = (byte) ((shortArray[i] >> 8) & 0xFF);
+        }
+        return byteArray;
     }
     
     /**
@@ -420,5 +492,19 @@ public class AudioProcessor {
      */
     public boolean isStreamingEnabled() {
         return streamingEnabled;
+    }
+    
+    /**
+     * Get the next audio data from the queue (non-blocking)
+     */
+    public byte[] getNextAudioData() {
+        return audioDataQueue.poll();
+    }
+    
+    /**
+     * Check if audio data is available in the queue
+     */
+    public boolean hasAudioData() {
+        return !audioDataQueue.isEmpty();
     }
 }
