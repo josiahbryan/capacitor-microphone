@@ -28,6 +28,69 @@ export interface MicrophonePlugin {
    * @since 0.0.3
    */
   stopRecording(): Promise<AudioRecording>;
+
+  /**
+   * Get live MediaStream for web-based visualization
+   * @returns MediaStream | null
+   * @since 0.1.0
+   */
+  getLiveStream(): Promise<MediaStream | null>;
+
+  /**
+   * Configure audio analysis parameters
+   * @param config Analysis configuration
+   * @since 0.1.0
+   */
+  configureAnalysis(config: AudioAnalysisConfig): Promise<void>;
+
+  /**
+   * Start audio analysis for visualization
+   * @since 0.1.0
+   */
+  startAnalysis(): Promise<void>;
+
+  /**
+   * Stop audio analysis
+   * @since 0.1.0
+   */
+  stopAnalysis(): Promise<void>;
+
+  /**
+   * Get real-time frequency data for visualization
+   * @returns Uint8Array frequency data
+   * @since 0.1.0
+   */
+  getFrequencyData(): Promise<Uint8Array>;
+
+  /**
+   * Start streaming raw audio data
+   * @param config Stream configuration
+   * @param callback Audio data callback
+   * @since 0.1.0
+   */
+  startAudioStream(
+    config: AudioStreamConfig,
+    callback: (audioData: Int16Array) => void
+  ): Promise<void>;
+
+  /**
+   * Stop audio streaming
+   * @since 0.1.0
+   */
+  stopAudioStream(): Promise<void>;
+}
+
+export interface AudioAnalysisConfig {
+  fftSize?: 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | 32768;
+  minDecibels?: number;
+  maxDecibels?: number;
+  smoothingTimeConstant?: number;
+}
+
+export interface AudioStreamConfig {
+  sampleRate?: number; // Default: 16000
+  bufferSize?: number; // Default: 1024
+  format?: 'int16' | 'float32'; // Default: 'int16'
 }
 
 export interface AudioRecording {

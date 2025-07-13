@@ -1,11 +1,25 @@
 import { WebPlugin } from '@capacitor/core';
 
-import type { MicrophonePlugin, PermissionStatus, AudioRecording } from './definitions';
+import type { MicrophonePlugin, PermissionStatus, AudioRecording, AudioAnalysisConfig, AudioStreamConfig } from './definitions';
 import { StatusMessageTypes } from './status-message-types';
 
 export class MicrophoneWeb extends WebPlugin implements MicrophonePlugin {
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
+  
+  // Audio analysis properties
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analysisConfig: AudioAnalysisConfig = {
+    fftSize: 1024,
+    minDecibels: -90,
+    maxDecibels: -10,
+    smoothingTimeConstant: 0.4
+  };
+  
+  // Audio streaming properties
+  private audioWorkletNode: AudioWorkletNode | null = null;
+  private streamCallback: ((audioData: Int16Array) => void) | null = null;
 
   async checkPermissions(): Promise<PermissionStatus> {
     const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
@@ -145,5 +159,115 @@ export class MicrophoneWeb extends WebPlugin implements MicrophonePlugin {
         reject(StatusMessageTypes.FailedToFetchRecording);
       }
     });
+  }
+
+  async getLiveStream(): Promise<MediaStream | null> {
+    return this.mediaRecorder?.stream || null;
+  }
+
+  async configureAnalysis(config: AudioAnalysisConfig): Promise<void> {
+    this.analysisConfig = { ...this.analysisConfig, ...config };
+    if (this.analyser) {
+      this.analyser.fftSize = this.analysisConfig.fftSize!;
+      this.analyser.minDecibels = this.analysisConfig.minDecibels!;
+      this.analyser.maxDecibels = this.analysisConfig.maxDecibels!;
+      this.analyser.smoothingTimeConstant = this.analysisConfig.smoothingTimeConstant!;
+    }
+  }
+
+  async startAnalysis(): Promise<void> {
+    if (!this.mediaRecorder?.stream) {
+      throw new Error('No active recording stream');
+    }
+
+    this.audioContext = new AudioContext();
+    this.analyser = this.audioContext.createAnalyser();
+    
+    // Apply configuration
+    await this.configureAnalysis(this.analysisConfig);
+    
+    const source = this.audioContext.createMediaStreamSource(this.mediaRecorder.stream);
+    source.connect(this.analyser);
+  }
+
+  async stopAnalysis(): Promise<void> {
+    if (this.audioContext) {
+      await this.audioContext.close();
+      this.audioContext = null;
+    }
+    this.analyser = null;
+  }
+
+  async getFrequencyData(): Promise<Uint8Array> {
+    if (!this.analyser) {
+      throw new Error('Analysis not started');
+    }
+    
+    const data = new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(data);
+    return data;
+  }
+
+  async startAudioStream(
+    config: AudioStreamConfig,
+    callback: (audioData: Int16Array) => void
+  ): Promise<void> {
+    if (!this.mediaRecorder?.stream) {
+      throw new Error('No active recording stream');
+    }
+
+    this.streamCallback = callback;
+    
+    // Create AudioContext with specified sample rate
+    const audioContext = new AudioContext({ sampleRate: config.sampleRate || 16000 });
+    
+    // Load AudioWorklet processor inline
+    const audioProcessorCode = `
+      const MAX_16BIT_INT = 32767;
+      
+      class AudioProcessor extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0];
+          if (!input || !input[0]) return true;
+          
+          const channelData = input[0];
+          const int16Array = new Int16Array(channelData.length);
+          
+          for (let i = 0; i < channelData.length; i++) {
+            int16Array[i] = Math.max(-32767, Math.min(32767, channelData[i] * MAX_16BIT_INT));
+          }
+          
+          this.port.postMessage({ audioData: int16Array });
+          return true;
+        }
+      }
+      
+      registerProcessor('audio-processor', AudioProcessor);
+    `;
+    
+    const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
+    const audioWorkletUrl = URL.createObjectURL(blob);
+    
+    await audioContext.audioWorklet.addModule(audioWorkletUrl);
+    
+    this.audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+    const source = audioContext.createMediaStreamSource(this.mediaRecorder.stream);
+    
+    source.connect(this.audioWorkletNode);
+    this.audioWorkletNode.connect(audioContext.destination);
+    
+    this.audioWorkletNode.port.onmessage = (event) => {
+      if (this.streamCallback) {
+        this.streamCallback(event.data.audioData);
+      }
+    };
+  }
+
+  async stopAudioStream(): Promise<void> {
+    if (this.audioWorkletNode) {
+      this.audioWorkletNode.disconnect();
+      this.audioWorkletNode = null;
+    }
+    this.streamCallback = null;
   }
 }

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capacitor Microphone Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .visualization {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            width: 100%;
+            height: 200px;
+        }
+        .streaming-data {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Capacitor Microphone Test</h1>
+    <p>This test page verifies the Web implementation of the audio streaming functionality.</p>
+    
+    <div class="controls">
+        <h3>Recording Controls</h3>
+        <button id="startRecording">Start Recording</button>
+        <button id="stopRecording" disabled>Stop Recording</button>
+        <button id="requestPermissions">Request Permissions</button>
+    </div>
+    
+    <div class="controls">
+        <h3>Analysis Controls</h3>
+        <button id="configureAnalysis">Configure Analysis</button>
+        <button id="startAnalysis" disabled>Start Analysis</button>
+        <button id="stopAnalysis" disabled>Stop Analysis</button>
+    </div>
+    
+    <div class="controls">
+        <h3>Streaming Controls</h3>
+        <button id="startStreaming" disabled>Start Audio Stream</button>
+        <button id="stopStreaming" disabled>Stop Audio Stream</button>
+    </div>
+    
+    <div id="status" class="status">Ready to test</div>
+    
+    <div class="visualization">
+        <h3>Audio Visualization</h3>
+        <canvas id="visualizer" width="800" height="200"></canvas>
+    </div>
+    
+    <div class="streaming-data">
+        <h3>Streaming Data (last 10 chunks)</h3>
+        <div id="streamingOutput">No streaming data yet...</div>
+    </div>
+    
+    <script type="module">
+        import { MicrophoneWeb } from './dist/esm/web.js';
+        
+        const microphone = new MicrophoneWeb();
+        const status = document.getElementById('status');
+        const visualizer = document.getElementById('visualizer');
+        const streamingOutput = document.getElementById('streamingOutput');
+        
+        let isRecording = false;
+        let isAnalyzing = false;
+        let isStreaming = false;
+        let streamingChunks = [];
+        let visualizationInterval;
+        
+        // Canvas setup
+        const canvas = visualizer;
+        const ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 200;
+        
+        function updateStatus(message, isError = false) {
+            status.textContent = message;
+            status.className = `status ${isError ? 'error' : 'success'}`;
+            console.log(message);
+        }
+        
+        function updateButtons() {
+            document.getElementById('startRecording').disabled = isRecording;
+            document.getElementById('stopRecording').disabled = !isRecording;
+            document.getElementById('startAnalysis').disabled = !isRecording || isAnalyzing;
+            document.getElementById('stopAnalysis').disabled = !isAnalyzing;
+            document.getElementById('startStreaming').disabled = !isRecording || isStreaming;
+            document.getElementById('stopStreaming').disabled = !isStreaming;
+        }
+        
+        function visualizeFrequencyData(data) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const barWidth = canvas.width / data.length;
+            let barHeight;
+            let x = 0;
+            
+            for (let i = 0; i < data.length; i++) {
+                barHeight = (data[i] / 255) * canvas.height;
+                
+                ctx.fillStyle = `rgb(${data[i]}, 50, 50)`;
+                ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth;
+            }
+        }
+        
+        function addStreamingData(audioData) {
+            const timestamp = new Date().toLocaleTimeString();
+            const dataInfo = `${timestamp}: ${audioData.length} samples, first 10: [${Array.from(audioData.slice(0, 10)).join(', ')}]`;
+            
+            streamingChunks.push(dataInfo);
+            if (streamingChunks.length > 10) {
+                streamingChunks.shift();
+            }
+            
+            streamingOutput.innerHTML = streamingChunks.join('<br>');
+            streamingOutput.scrollTop = streamingOutput.scrollHeight;
+        }
+        
+        // Event listeners
+        document.getElementById('requestPermissions').addEventListener('click', async () => {
+            try {
+                const result = await microphone.requestPermissions();
+                updateStatus(`Permissions: ${result.microphone}`);
+            } catch (error) {
+                updateStatus(`Permission error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('startRecording').addEventListener('click', async () => {
+            try {
+                const result = await microphone.startRecording();
+                updateStatus(`Recording started: ${result.status}`);
+                isRecording = true;
+                updateButtons();
+            } catch (error) {
+                updateStatus(`Recording error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('stopRecording').addEventListener('click', async () => {
+            try {
+                const result = await microphone.stopRecording();
+                updateStatus(`Recording stopped. Duration: ${result.duration}ms`);
+                isRecording = false;
+                isAnalyzing = false;
+                isStreaming = false;
+                updateButtons();
+                
+                if (visualizationInterval) {
+                    clearInterval(visualizationInterval);
+                }
+            } catch (error) {
+                updateStatus(`Stop recording error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('configureAnalysis').addEventListener('click', async () => {
+            try {
+                await microphone.configureAnalysis({
+                    fftSize: 1024,
+                    minDecibels: -90,
+                    maxDecibels: -10,
+                    smoothingTimeConstant: 0.4
+                });
+                updateStatus('Analysis configured');
+            } catch (error) {
+                updateStatus(`Configure analysis error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('startAnalysis').addEventListener('click', async () => {
+            try {
+                await microphone.startAnalysis();
+                updateStatus('Analysis started');
+                isAnalyzing = true;
+                updateButtons();
+                
+                // Start visualization
+                visualizationInterval = setInterval(async () => {
+                    try {
+                        const frequencyData = await microphone.getFrequencyData();
+                        visualizeFrequencyData(frequencyData);
+                    } catch (error) {
+                        console.error('Visualization error:', error);
+                    }
+                }, 100);
+            } catch (error) {
+                updateStatus(`Start analysis error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('stopAnalysis').addEventListener('click', async () => {
+            try {
+                await microphone.stopAnalysis();
+                updateStatus('Analysis stopped');
+                isAnalyzing = false;
+                updateButtons();
+                
+                if (visualizationInterval) {
+                    clearInterval(visualizationInterval);
+                }
+            } catch (error) {
+                updateStatus(`Stop analysis error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('startStreaming').addEventListener('click', async () => {
+            try {
+                await microphone.startAudioStream({
+                    sampleRate: 16000,
+                    bufferSize: 1024,
+                    format: 'int16'
+                }, addStreamingData);
+                
+                updateStatus('Audio streaming started');
+                isStreaming = true;
+                updateButtons();
+            } catch (error) {
+                updateStatus(`Start streaming error: ${error}`, true);
+            }
+        });
+        
+        document.getElementById('stopStreaming').addEventListener('click', async () => {
+            try {
+                await microphone.stopAudioStream();
+                updateStatus('Audio streaming stopped');
+                isStreaming = false;
+                updateButtons();
+            } catch (error) {
+                updateStatus(`Stop streaming error: ${error}`, true);
+            }
+        });
+        
+        // Initialize
+        updateButtons();
+        updateStatus('Ready to test');
+    </script>
+</body>
+</html>
