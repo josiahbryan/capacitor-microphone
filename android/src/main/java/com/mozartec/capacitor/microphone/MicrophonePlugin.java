@@ -40,6 +40,34 @@ public class MicrophonePlugin extends Plugin {
 
     private Microphone implementation;
     private AudioProcessor audioProcessor;
+    
+    // Current audio processing state
+    private boolean isAudioProcessingActive = false;
+    
+    @Override
+    public void load() {
+        super.load();
+        implementation = new Microphone();
+        audioProcessor = new AudioProcessor();
+    }
+    
+    @Override
+    protected void handleOnDestroy() {
+        super.handleOnDestroy();
+        
+        // Clean up audio processing
+        if (audioProcessor != null) {
+            audioProcessor.stopAudioProcessing();
+            audioProcessor = null;
+        }
+        
+        // Clean up Microphone implementation
+        if (implementation != null) {
+            implementation = null;
+        }
+        
+        isAudioProcessingActive = false;
+    }
 
     // Looks like checkPermissions is available out of the box
 
@@ -149,59 +177,196 @@ public class MicrophonePlugin extends Plugin {
 
     @PluginMethod
     public void configureAnalysis(PluginCall call) {
-        // TODO: Implement audio analysis configuration
-        // For now, just store the configuration
-        JSObject config = new JSObject();
-        config.put("fftSize", call.getInt("fftSize", 1024));
-        config.put("minDecibels", call.getDouble("minDecibels", -90.0));
-        config.put("maxDecibels", call.getDouble("maxDecibels", -10.0));
-        config.put("smoothingTimeConstant", call.getDouble("smoothingTimeConstant", 0.4));
-        
-        // TODO: Apply configuration to audioProcessor when implemented
-        call.resolve();
+        try {
+            // Extract configuration parameters
+            int fftSize = call.getInt("fftSize", 1024);
+            float minDecibels = (float) call.getDouble("minDecibels", -90.0);
+            float maxDecibels = (float) call.getDouble("maxDecibels", -10.0);
+            float smoothingTimeConstant = (float) call.getDouble("smoothingTimeConstant", 0.4);
+            
+            // Validate FFT size (must be power of 2)
+            if ((fftSize & (fftSize - 1)) != 0 || fftSize < 32 || fftSize > 32768) {
+                call.reject("Invalid fftSize. Must be a power of 2 between 32 and 32768");
+                return;
+            }
+            
+            // Create and configure analysis
+            AudioProcessor.AudioAnalysisConfig config = new AudioProcessor.AudioAnalysisConfig(
+                fftSize, minDecibels, maxDecibels, smoothingTimeConstant
+            );
+            
+            audioProcessor.configureAnalysis(config);
+            
+            JSObject result = new JSObject();
+            result.put("status", "Audio analysis configured successfully");
+            result.put("fftSize", fftSize);
+            result.put("minDecibels", minDecibels);
+            result.put("maxDecibels", maxDecibels);
+            result.put("smoothingTimeConstant", smoothingTimeConstant);
+            
+            call.resolve(result);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error configuring audio analysis", e);
+            call.reject("Failed to configure audio analysis: " + e.getMessage());
+        }
     }
 
     @PluginMethod
     public void startAnalysis(PluginCall call) {
-        // TODO: Implement audio analysis startup
-        // This will require creating AudioProcessor and starting FFT analysis
-        call.reject("Audio analysis not yet implemented on Android");
+        try {
+            // Check permissions
+            if (!isAudioRecordingPermissionGranted()) {
+                call.reject("Audio recording permission not granted");
+                return;
+            }
+            
+            // Start audio processing if not already active
+            if (!isAudioProcessingActive) {
+                if (!audioProcessor.startAudioProcessing()) {
+                    call.reject("Failed to start audio processing");
+                    return;
+                }
+                isAudioProcessingActive = true;
+            }
+            
+            // Start analysis
+            if (audioProcessor.startAnalysis()) {
+                JSObject result = new JSObject();
+                result.put("status", "Audio analysis started successfully");
+                call.resolve(result);
+            } else {
+                call.reject("Failed to start audio analysis");
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting audio analysis", e);
+            call.reject("Failed to start audio analysis: " + e.getMessage());
+        }
     }
 
     @PluginMethod
     public void stopAnalysis(PluginCall call) {
-        // TODO: Implement audio analysis stopping
-        if (audioProcessor != null) {
-            // audioProcessor.stopAnalysis();
+        try {
+            if (audioProcessor != null) {
+                audioProcessor.stopAnalysis();
+                
+                // Stop audio processing if neither analysis nor streaming is active
+                if (!audioProcessor.isAnalysisEnabled() && !audioProcessor.isStreamingEnabled()) {
+                    audioProcessor.stopAudioProcessing();
+                    isAudioProcessingActive = false;
+                }
+                
+                JSObject result = new JSObject();
+                result.put("status", "Audio analysis stopped successfully");
+                call.resolve(result);
+            } else {
+                call.resolve();
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping audio analysis", e);
+            call.reject("Failed to stop audio analysis: " + e.getMessage());
         }
-        call.resolve();
     }
 
     @PluginMethod
     public void getFrequencyData(PluginCall call) {
-        // TODO: Implement frequency data retrieval
-        // This will return FFT analysis results
-        call.reject("Audio analysis not yet implemented on Android");
+        try {
+            if (audioProcessor != null && audioProcessor.isAnalysisEnabled()) {
+                byte[] frequencyData = audioProcessor.getFrequencyData();
+                
+                // Convert byte array to int array for JavaScript compatibility
+                int[] intFrequencyData = new int[frequencyData.length];
+                for (int i = 0; i < frequencyData.length; i++) {
+                    intFrequencyData[i] = frequencyData[i] & 0xFF; // Convert to unsigned int
+                }
+                
+                JSObject result = new JSObject();
+                result.put("frequencyData", intFrequencyData);
+                result.put("length", intFrequencyData.length);
+                
+                call.resolve(result);
+            } else {
+                call.reject("Audio analysis not started");
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting frequency data", e);
+            call.reject("Failed to get frequency data: " + e.getMessage());
+        }
     }
 
     @PluginMethod
     public void startAudioStream(PluginCall call) {
-        // TODO: Implement audio streaming
-        // This will require AudioRecord for raw audio access
-        JSObject config = new JSObject();
-        config.put("sampleRate", call.getInt("sampleRate", 16000));
-        config.put("bufferSize", call.getInt("bufferSize", 1024));
-        
-        call.reject("Audio streaming not yet implemented on Android");
+        try {
+            // Check permissions
+            if (!isAudioRecordingPermissionGranted()) {
+                call.reject("Audio recording permission not granted");
+                return;
+            }
+            
+            // Extract configuration
+            int sampleRate = call.getInt("sampleRate", 16000);
+            int bufferSize = call.getInt("bufferSize", 1024);
+            String format = call.getString("format", "int16");
+            
+            // Create streaming config
+            AudioProcessor.AudioStreamConfig config = new AudioProcessor.AudioStreamConfig(
+                sampleRate, bufferSize, format
+            );
+            
+            // Start audio processing if not already active
+            if (!isAudioProcessingActive) {
+                audioProcessor.configureStreaming(config);
+                if (!audioProcessor.startAudioProcessing()) {
+                    call.reject("Failed to start audio processing");
+                    return;
+                }
+                isAudioProcessingActive = true;
+            }
+            
+            // Start streaming
+            if (audioProcessor.startStreaming(config, call)) {
+                JSObject result = new JSObject();
+                result.put("status", "Audio streaming started successfully");
+                result.put("sampleRate", sampleRate);
+                result.put("bufferSize", bufferSize);
+                result.put("format", format);
+                call.resolve(result);
+            } else {
+                call.reject("Failed to start audio streaming");
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting audio stream", e);
+            call.reject("Failed to start audio stream: " + e.getMessage());
+        }
     }
 
     @PluginMethod
     public void stopAudioStream(PluginCall call) {
-        // TODO: Implement audio streaming stop
-        if (audioProcessor != null) {
-            // audioProcessor.stopStreaming();
+        try {
+            if (audioProcessor != null) {
+                audioProcessor.stopStreaming();
+                
+                // Stop audio processing if neither analysis nor streaming is active
+                if (!audioProcessor.isAnalysisEnabled() && !audioProcessor.isStreamingEnabled()) {
+                    audioProcessor.stopAudioProcessing();
+                    isAudioProcessingActive = false;
+                }
+                
+                JSObject result = new JSObject();
+                result.put("status", "Audio streaming stopped successfully");
+                call.resolve(result);
+            } else {
+                call.resolve();
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping audio stream", e);
+            call.reject("Failed to stop audio stream: " + e.getMessage());
         }
-        call.resolve();
     }
 
     private boolean isAudioRecordingPermissionGranted() {
