@@ -20,5 +20,7 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSPrincipalClass</key>
 	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This plugin requires microphone access for audio recording and analysis.</string>
 </dict>
 </plist>
