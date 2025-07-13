@@ -8,6 +8,7 @@ import AVFoundation
 @objc(MicrophonePlugin)
 public class MicrophonePlugin: CAPPlugin {
     private var implementation: Microphone? = nil
+    private var audioProcessor: AudioProcessor? = nil
 
     @objc override public func checkPermissions(_ call: CAPPluginCall) {
         var result: [String: Any] = [:]
@@ -104,6 +105,60 @@ public class MicrophonePlugin: CAPPlugin {
         } else {
             call.resolve(audioRecording.toDictionary())
         }
+    }
+    
+    @objc func getLiveStream(_ call: CAPPluginCall) {
+        // Not supported on iOS - return null
+        call.resolve(["stream": NSNull()])
+    }
+    
+    @objc func configureAnalysis(_ call: CAPPluginCall) {
+        // TODO: Implement audio analysis configuration
+        // For now, just store the configuration
+        let fftSize = call.getInt("fftSize") ?? 1024
+        let minDecibels = call.getFloat("minDecibels") ?? -90.0
+        let maxDecibels = call.getFloat("maxDecibels") ?? -10.0
+        let smoothingTimeConstant = call.getFloat("smoothingTimeConstant") ?? 0.4
+        
+        // TODO: Apply configuration to audioProcessor when implemented
+        call.resolve()
+    }
+    
+    @objc func startAnalysis(_ call: CAPPluginCall) {
+        // TODO: Implement audio analysis startup
+        // This will require creating AudioProcessor and starting vDSP FFT analysis
+        call.reject("Audio analysis not yet implemented on iOS")
+    }
+    
+    @objc func stopAnalysis(_ call: CAPPluginCall) {
+        // TODO: Implement audio analysis stopping
+        if let audioProcessor = audioProcessor {
+            // audioProcessor.stopAnalysis()
+        }
+        call.resolve()
+    }
+    
+    @objc func getFrequencyData(_ call: CAPPluginCall) {
+        // TODO: Implement frequency data retrieval
+        // This will return vDSP FFT analysis results
+        call.reject("Audio analysis not yet implemented on iOS")
+    }
+    
+    @objc func startAudioStream(_ call: CAPPluginCall) {
+        // TODO: Implement audio streaming
+        // This will require AVAudioEngine for raw audio access
+        let sampleRate = call.getDouble("sampleRate") ?? 16000
+        let bufferSize = call.getInt("bufferSize") ?? 1024
+        
+        call.reject("Audio streaming not yet implemented on iOS")
+    }
+    
+    @objc func stopAudioStream(_ call: CAPPluginCall) {
+        // TODO: Implement audio streaming stop
+        if let audioProcessor = audioProcessor {
+            // audioProcessor.stopStreaming()
+        }
+        call.resolve()
     }
     
     private func isAudioRecordingPermissionGranted() -> Bool {

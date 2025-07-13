@@ -39,6 +39,7 @@ public class MicrophonePlugin extends Plugin {
     static final String MICROPHONE = "microphone";
 
     private Microphone implementation;
+    private AudioProcessor audioProcessor;
 
     // Looks like checkPermissions is available out of the box
 
@@ -138,6 +139,69 @@ public class MicrophonePlugin extends Plugin {
         } finally {
             implementation = null;
         }
+    }
+
+    @PluginMethod
+    public void getLiveStream(PluginCall call) {
+        // Not supported on Android - return null
+        call.resolve(new JSObject().put("stream", null));
+    }
+
+    @PluginMethod
+    public void configureAnalysis(PluginCall call) {
+        // TODO: Implement audio analysis configuration
+        // For now, just store the configuration
+        JSObject config = new JSObject();
+        config.put("fftSize", call.getInt("fftSize", 1024));
+        config.put("minDecibels", call.getDouble("minDecibels", -90.0));
+        config.put("maxDecibels", call.getDouble("maxDecibels", -10.0));
+        config.put("smoothingTimeConstant", call.getDouble("smoothingTimeConstant", 0.4));
+        
+        // TODO: Apply configuration to audioProcessor when implemented
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void startAnalysis(PluginCall call) {
+        // TODO: Implement audio analysis startup
+        // This will require creating AudioProcessor and starting FFT analysis
+        call.reject("Audio analysis not yet implemented on Android");
+    }
+
+    @PluginMethod
+    public void stopAnalysis(PluginCall call) {
+        // TODO: Implement audio analysis stopping
+        if (audioProcessor != null) {
+            // audioProcessor.stopAnalysis();
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getFrequencyData(PluginCall call) {
+        // TODO: Implement frequency data retrieval
+        // This will return FFT analysis results
+        call.reject("Audio analysis not yet implemented on Android");
+    }
+
+    @PluginMethod
+    public void startAudioStream(PluginCall call) {
+        // TODO: Implement audio streaming
+        // This will require AudioRecord for raw audio access
+        JSObject config = new JSObject();
+        config.put("sampleRate", call.getInt("sampleRate", 16000));
+        config.put("bufferSize", call.getInt("bufferSize", 1024));
+        
+        call.reject("Audio streaming not yet implemented on Android");
+    }
+
+    @PluginMethod
+    public void stopAudioStream(PluginCall call) {
+        // TODO: Implement audio streaming stop
+        if (audioProcessor != null) {
+            // audioProcessor.stopStreaming();
+        }
+        call.resolve();
     }
 
     private boolean isAudioRecordingPermissionGranted() {
